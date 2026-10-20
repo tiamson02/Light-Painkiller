@@ -1,0 +1,4 @@
+LIBRARY Light
+EXPORTS
+    Light_Initialize
+    PKPatch_Initialize
