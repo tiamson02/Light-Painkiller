@@ -48,16 +48,25 @@ extern "C" HRESULT WINAPI DllUnregisterServer() {
     return fn ? fn() : E_FAIL;
 }
 extern "C" BOOL __cdecl Light_Initialize() {
+    // The add-on loader calls this explicitly after LoadLibraryExA returns,
+    // with Engine.dll mapped and before game script/level initialization.
     return pk::initialize(s_self) ? TRUE : FALSE;
+}
+extern "C" int __cdecl Light_IsLightingActive() {
+    // Loaded successfully != hooks installed. An explicit status value lets
+    // Painkiller.exe report initialization errors instead of false success.
+    return pk::g.lightingReady.load() ? 1 : 0;
 }
 // Backward-compatible entry point for Custom EXEs that already use v0.1.6.
 extern "C" BOOL __cdecl PKPatch_Initialize() {
     return Light_Initialize();
 }
+#if defined(LIGHT_PROXY) && LIGHT_PROXY
 static DWORD WINAPI patchThread(void*) {
     pk::initLog(s_self);
     pk::log("Proxy loaded, PID=%lu; waiting for Engine.dll", (unsigned long)GetCurrentProcessId());
     Sleep(1500);
+    // Only the dinput8 proxy uses this legacy asynchronous path.
     // Engine.dll may not yet be loaded by the game when this DLL is mapped.
     for (unsigned attempt=0; attempt<120; ++attempt) {
         if (GetModuleHandleA("Engine.dll")) {
@@ -70,12 +79,20 @@ static DWORD WINAPI patchThread(void*) {
     pk::log("Engine.dll not found after 60 seconds; patch not installed.");
     return 0;
 }
+#endif
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         s_self = module;
         DisableThreadLibraryCalls(module);
+#if defined(LIGHT_PROXY) && LIGHT_PROXY
+        // Early-loaded dinput8.dll proxy: Engine.dll may not exist yet.
         HANDLE thread = CreateThread(nullptr, 0, patchThread, nullptr, 0, nullptr);
         if (thread) CloseHandle(thread);
+#else
+        // Data/addons/Light.dll: do NOT initialize or start a background
+        // thread under the loader lock. Painkiller.exe calls Light_Initialize
+        // synchronously after LoadLibraryExA returns.
+#endif
     }
     // Process-lifetime hooks: explicitly unloading the DLL while game runs is unsupported.
     return TRUE;

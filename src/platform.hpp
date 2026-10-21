@@ -9,7 +9,7 @@ namespace pk {
 struct Config {
     bool unlockLights = true;
     unsigned maxLights = 128;            // registry capacity per entity
-    unsigned extraPassesPerMesh = 2;     // strict budget for additional passes
+    unsigned extraPassesPerMesh = 124;   // full 128 point lights when MaxLights=128; costly
     bool timerSizeFix = true;
     bool logLights = false;
 };

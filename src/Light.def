@@ -1,4 +1,5 @@
 LIBRARY Light
 EXPORTS
     Light_Initialize
+    Light_IsLightingActive
     PKPatch_Initialize

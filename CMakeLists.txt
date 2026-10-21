@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
-project(Light VERSION 0.2.1 LANGUAGES C CXX)
+project(Light VERSION 0.2.9 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_library(light_core STATIC src/light_registry.cpp)
+add_library(light_core STATIC src/light_registry.cpp src/light_replay.cpp)
 target_include_directories(light_core PUBLIC include)
 include(CTest)
 if(BUILD_TESTING)

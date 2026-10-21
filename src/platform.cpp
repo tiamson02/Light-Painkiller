@@ -63,7 +63,7 @@ Config loadConfig(HMODULE self) {
     };
     c.unlockLights = get("UnlockLights", 1) != 0;
     c.maxLights = static_cast<unsigned>(std::clamp(get("MaxLights", 128), 4, 512));
-    c.extraPassesPerMesh = static_cast<unsigned>(std::clamp(get("ExtraPassesPerMesh", 2), 0, 16));
+    c.extraPassesPerMesh = static_cast<unsigned>(std::clamp(get("ExtraPassesPerMesh", 124), 0, 512));
     c.timerSizeFix = get("TimerSizeFix", 1) != 0;
     c.logLights = get("LogLights", 0) != 0;
     log("Config path: %s; UnlockLights=%d MaxLights=%u ExtraPassesPerMesh=%u TimerSizeFix=%d LogLights=%d",

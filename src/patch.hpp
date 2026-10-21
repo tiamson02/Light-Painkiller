@@ -34,8 +34,21 @@ extern EnginePatch g;
 struct Stats {
     std::atomic<unsigned long long> add{0}, reset{0}, draw{0};
     std::atomic<unsigned long long> nativeSingle{0}, nativeUber{0};
-    std::atomic<unsigned long long> extra{0}, unsafe{0}, incomplete{0};
+    std::atomic<unsigned long long> replaySingles{0}, unsafe{0}, incomplete{0};
+    std::atomic<unsigned long long> timerCalls{0};
     std::atomic<unsigned long long> noOverflow{0};
+    std::atomic<unsigned long long> overflowEligible{0};
+    std::atomic<unsigned long long> replayedMeshes{0}, replayedNative{0}, replayedOverflow{0};
+    std::atomic<unsigned long long> lightCacheHits{0}, lightCacheMisses{0};
+    std::atomic<unsigned long long> replayUberLights{0}, replayUberBatches{0};
+    std::atomic<unsigned long long> skippedUnsupported{0}, skippedNoDevice{0};
+    // Sampled CPU timings (1/128 WorldMesh::Draw calls with LogLights=1).
+    // Do not interpret these as GPU time or whole-frame latency.
+    std::atomic<unsigned long long> profStockSamples{0}, profStockNativeNs{0};
+    std::atomic<unsigned long long> profReplaySamples{0}, profReplayPrepareNs{0};
+    std::atomic<unsigned long long> profReplayNativeNs{0}, profReplayPassNs{0};
+    std::atomic<unsigned long long> profOver8{0}, profOver16{0}, profOver32{0};
+    std::atomic<unsigned long long> profMaxLightsOnMesh{0};
 };
 extern Stats stats;
 
@@ -53,21 +66,4 @@ void __fastcall hookLightPass(void* mesh, void*, const void* light);
 void __fastcall hookUber(void* mesh, void*, const void* const* lights, int count);
 uint32_t __fastcall hookTime(void* driver, void*);
 
-// This scope lives ONLY while original WorldMesh::Draw is running.
-// Additional passes are never emitted after WorldMesh::Draw returns.
-struct DrawContext {
-    const void* mesh = nullptr;
-    const light::LightRegistry::LightRecord* queued = nullptr;
-    std::size_t queuedCount = 0;
-    const void* seen[16]{};
-    unsigned seenCount = 0;
-    bool dispatched = false;
-    DrawContext* previous = nullptr;
-    void note(const void* light) noexcept {
-        if (!light) return;
-        for (unsigned i = 0; i < seenCount; ++i) if (seen[i] == light) return;
-        if (seenCount < 16) seen[seenCount++] = light;
-    }
-};
-extern thread_local DrawContext* tlsDraw;
 }
