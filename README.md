@@ -28,5 +28,3 @@ The `Light_Initialize` export is available for Custom EXE integration; `PKPatch_
 Compare the same scene (including torch/flashlight, weapons, world geometry and FPS): no patch; `ExtraPassesPerMesh=0`; `ExtraPassesPerMesh=2`. Keep `TimerSizeFix=0` for isolation across runs. Enable `LogLights=1` only for diagnostics. 
 
 The component is an experimental reconstruction of the light overflow pipeline, *not a verified solution for all projected lights, PKMDL models, or mods.* Tests in this package validate only the engine-independent registry and guard logic. Build and live tests on Windows are still required.
-
-See [known limitations](KNOWN_LIMITATIONS.md).
