@@ -55,6 +55,8 @@ extern "C" BOOL __cdecl PKPatch_Initialize() {
     return Light_Initialize();
 }
 static DWORD WINAPI patchThread(void*) {
+    pk::initLog(s_self);
+    pk::log("Proxy loaded, PID=%lu; waiting for Engine.dll", (unsigned long)GetCurrentProcessId());
     Sleep(1500);
     // Engine.dll may not yet be loaded by the game when this DLL is mapped.
     for (unsigned attempt=0; attempt<120; ++attempt) {

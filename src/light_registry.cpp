@@ -72,6 +72,49 @@ std::size_t LightRegistry::snapshotRecordsInto(Object entity, LightRecord* out,
     return count;
 }
 
+bool LightRegistry::safePointLight(const LightRecord& light) noexcept {
+    if (!light.valid || !light.light || light.special != 0 || light.type == 2)
+        return false;
+    return (light.flags & 0x00400000u) != 0 || light.type == 3;
+}
+
+bool LightRegistry::allNativeObserved(const Object* native, std::size_t count,
+                                      const Object* observed, std::size_t observedCount) noexcept {
+    if (!native || !observed || count != 4 || observedCount < count) return false;
+    for (std::size_t i=0; i<count; ++i) {
+        if (!native[i] || !contains(observed, observedCount, native[i])) return false;
+    }
+    return true;
+}
+
+bool LightRegistry::contains(const Object* lights, std::size_t count, Object light) noexcept {
+    if (!lights) return false;
+    for (std::size_t i = 0; i < count; ++i) if (lights[i] == light) return true;
+    return false;
+}
+
+bool LightRegistry::containsNativeRecord(const LightRecord* records, std::size_t count, Object light) noexcept {
+    if (!records || !light) return false;
+    for (std::size_t i = 0; i<count; ++i)
+        if (records[i].light == light && safePointLight(records[i])) return true;
+    return false;
+}
+
+std::size_t LightRegistry::selectNotNative(const LightRecord* all, std::size_t count,
+                                          const Object* native, std::size_t nativeCount,
+                                          LightRecord* result, std::size_t capacity) noexcept {
+    if (!all || !native || !nativeCount || !result || !capacity) return 0;
+    std::size_t used = 0;
+    for (std::size_t i = 0; i < count && used < capacity; ++i) {
+        if (!all[i].light || contains(native, nativeCount, all[i].light)) continue;
+        bool duplicate = false;
+        for (std::size_t j = 0; j < used; ++j)
+            if (result[j].light == all[i].light) { duplicate = true; break; }
+        if (!duplicate) result[used++] = all[i];
+    }
+    return used;
+}
+
 std::size_t LightRegistry::trackedEntities() const {
     return activeEntities_.load(std::memory_order_relaxed);
 }

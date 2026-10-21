@@ -8,16 +8,27 @@
 namespace pk {
 static std::mutex logMutex;
 static char logPath[MAX_PATH] = "Light.log";
+static std::once_flag logSessionOnce;
 
 void initLog(HMODULE self) {
-    char path[MAX_PATH] = {};
-    if (GetModuleFileNameA(self, path, MAX_PATH)) {
-        char* slash = strrchr(path, '\\');
-        if (slash) {
-            *(slash + 1) = '\0';
-            snprintf(logPath, sizeof(logPath), "%sLight.log", path);
+    // One log file per process session. Re-entrant attempts to initialize
+    // Light (proxy thread + explicit Custom EXE entry point) must NOT wipe it.
+    std::call_once(logSessionOnce, [self]() {
+        char path[MAX_PATH] = {};
+        if (self && GetModuleFileNameA(self, path, MAX_PATH)) {
+            char* slash = strrchr(path, '\\');
+            if (slash) {
+                *(slash + 1) = '\0';
+                snprintf(logPath, sizeof(logPath), "%sLight.log", path);
+            }
         }
-    }
+        std::lock_guard<std::mutex> guard(logMutex);
+        HANDLE file = CreateFileA(logPath, GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+        else OutputDebugStringA("[Light] Failed to reset Light.log for this session\n");
+    });
 }
 void log(const char* fmt, ...) {
     char msg[1024] = {};
@@ -47,19 +58,17 @@ Config loadConfig(HMODULE self) {
     char* slash = strrchr(path, '\\');
     if (slash) strcpy_s(slash + 1, sizeof(path) - (slash + 1 - path), "Light.ini");
     else strcpy_s(path, "Light.ini");
-    auto get = [&](const char* key, int def) -> int { return (int)GetPrivateProfileIntA("Settings", key, def, path); };
+    auto get = [&](const char* key, int def) -> int {
+        return static_cast<int>(GetPrivateProfileIntA("Settings", key, def, path));
+    };
     c.unlockLights = get("UnlockLights", 1) != 0;
-    c.maxLights = (unsigned)std::clamp(get("MaxLights", 128), 4, 512);
+    c.maxLights = static_cast<unsigned>(std::clamp(get("MaxLights", 128), 4, 512));
+    c.extraPassesPerMesh = static_cast<unsigned>(std::clamp(get("ExtraPassesPerMesh", 2), 0, 16));
     c.timerSizeFix = get("TimerSizeFix", 1) != 0;
-    c.hookD3DState = get("HookD3DState", 1) != 0;
-    c.trustEnginePointers = get("TrustEnginePointers", 1) != 0;
-    c.fastSingleUberPass = get("FastSingleUberPass", 1) != 0;
     c.logLights = get("LogLights", 0) != 0;
-    c.preserveNativePasses = get("PreserveNativePasses", 0) != 0;
-    c.safeNativeFallback = get("SafeNativeFallback", 1) != 0;
-    c.renderExtraLights = get("RenderExtraLights", 1) != 0;
-    c.maxRenderLightsPerMesh = (unsigned)std::clamp(get("MaxRenderLightsPerMesh", 12), 1, 512);
-    c.maxExtraPassesPerMesh = (unsigned)std::clamp(get("MaxExtraPassesPerMesh", 4), 1, 128);
+    log("Config path: %s; UnlockLights=%d MaxLights=%u ExtraPassesPerMesh=%u TimerSizeFix=%d LogLights=%d",
+        path, c.unlockLights, c.maxLights, c.extraPassesPerMesh,
+        c.timerSizeFix, c.logLights);
     return c;
 }
 void* exported(HMODULE mod, const char* name) {
@@ -77,6 +86,4 @@ bool readable(const void* p, size_t n) {
     uintptr_t start = reinterpret_cast<uintptr_t>(p);
     return good && start >= base && (start - base) <= m.RegionSize && n <= m.RegionSize - (start - base);
 }
-uint32_t read32(const void* p) { uint32_t v{}; if (readable(p, sizeof v)) memcpy(&v,p,sizeof v); return v; }
-uint8_t read8(const void* p) { uint8_t v{}; if (readable(p,sizeof v)) memcpy(&v,p,sizeof v); return v; }
 }

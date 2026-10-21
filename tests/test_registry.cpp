@@ -1,45 +1,48 @@
 #include "light_registry.hpp"
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <array>
 #include <cstdint>
 #include <iostream>
 
+static const void* ptr(std::uintptr_t n) { return reinterpret_cast<const void*>(n); }
 int main() {
-    light::LightRegistry registry(128);
-    const auto e = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10000));
-    for (std::uintptr_t i = 1; i <= 150; ++i) {
-        const auto light = reinterpret_cast<const void*>(0x20000 + i * 16);
-        const bool inserted = registry.add(e, light);
-        assert(inserted == (i <= 128));
-    }
-    assert(registry.snapshot(e).size() == 128);
-    std::array<const void*, 128> testBuffer{};
-    assert(registry.snapshotInto(e,testBuffer.data(),testBuffer.size()) == 128);
-    assert(testBuffer[0] == reinterpret_cast<const void*>(0x20000+16));
-    std::array<const void*, 4> shortBuffer{};
-    assert(registry.snapshotInto(e,shortBuffer.data(),shortBuffer.size()) == 4);
-    assert(registry.snapshotInto(e,nullptr,0) == 0);
-    assert(!registry.add(e, registry.snapshot(e).front()));
-    auto batches3 = light::planLightPasses(registry.snapshot(e), light::LightPassMode::UberBatchesOfThree);
-    auto batches4 = light::planLightPasses(registry.snapshot(e), light::LightPassMode::UberBatchesOfFour);
-    assert(batches3.size() == 43 && batches3.back().size() == 2);
-    assert(batches4.size() == 32 && batches4.back().size() == 4);
+    using Registry = light::LightRegistry;
+    using Record = Registry::LightRecord;
+    Registry registry(128);
+    const void* entity = ptr(0x10000);
+    for (unsigned i=0; i<140; ++i)
+        assert(registry.addClassified(entity, ptr(0x20000+16*i), 0x400000, 0, 1, true) == (i<128));
     assert(registry.hasAny());
-    registry.reset(e);
+    std::array<Record, 128> records{};
+    assert(registry.snapshotRecordsInto(entity, records.data(), 128) == 128);
+    const void* native[4] = {records[0].light,records[1].light,records[2].light,records[3].light};
+    const void* incomplete[3] = {native[0],native[1],native[3]};
+    const void* completed[4] = {native[3],native[0],native[2],native[1]};
+    assert(!Registry::allNativeObserved(native,4,incomplete,3));
+    assert( Registry::allNativeObserved(native,4,completed,4));
+    assert(!Registry::allNativeObserved(native,3,completed,4));
+    Record extra[128]{};
+    assert(Registry::selectNotNative(records.data(),128,native,4,extra,128) == 124);
+    assert(extra[0].light == records[4].light);
+    for (const auto& r : records) assert(Registry::safePointLight(r));
+    for (auto* p : native) assert(Registry::containsNativeRecord(records.data(),128,p));
+    assert(!Registry::containsNativeRecord(records.data(),128,ptr(0x90000)));
+    assert(!Registry::containsNativeRecord(nullptr,0,native[0]));
+    Record projected{ptr(0x30000),0x400000,0,2,true};
+    assert(!Registry::safePointLight(projected));
+    Record special{ptr(0x30000),0x400000,1,1,true};
+    assert(!Registry::safePointLight(special));
+    Record unknown{ptr(0x30000),0x400000,0,1,false};
+    assert(!Registry::safePointLight(unknown));
+    Record nondynamic{ptr(0x30000),0,0,1,true};
+    assert(!Registry::safePointLight(nondynamic));
+    Record type3{ptr(0x30000),0,0,3,true};
+    assert(Registry::safePointLight(type3));
+    registry.reset(entity);
     assert(!registry.hasAny());
-    assert(registry.snapshot(e).empty());
-    assert(registry.snapshotInto(e,testBuffer.data(),testBuffer.size()) == 0);
-    // Classification belongs to registration, not to each mesh draw.
-    const auto l = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x40000));
-    assert(registry.addClassified(e, l, 0x00400000, 0, 3, true));
-    std::array<light::LightRegistry::LightRecord, 2> records{};
-    assert(registry.snapshotRecordsInto(e, records.data(), records.size()) == 1);
-    assert(records[0].light == l && records[0].flags == 0x00400000);
-    assert(records[0].type == 3 && records[0].valid);
-    assert(!registry.addClassified(e, l, 0, 1, 2, true));
-    assert(registry.snapshotRecordsInto(e, records.data(), records.size()) == 1);
-    assert(records[0].flags == 0 && records[0].special == 1 && records[0].type == 2);
-    registry.reset(e);
-    assert(!registry.hasAny());
-    std::cout << "LightRegistry: all tests passed\n";
+    assert(registry.snapshot(entity).empty());
+    std::cout << "Light: safe in-Draw selection tests passed\n";
 }

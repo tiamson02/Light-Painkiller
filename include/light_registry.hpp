@@ -35,6 +35,17 @@ public:
     bool hasAny() const noexcept { return activeEntities_.load(std::memory_order_relaxed) != 0; }
     std::size_t limit() const noexcept { return maxLights_; }
     std::size_t trackedEntities() const;
+    // Conservative light eligibility for in-Draw overflow. Light type 2
+    // uses the original UberLightPass pathway (not a safe single-light pass).
+    // Special/unknown sources remain native; false negatives are preferable to artifacts.
+    static bool safePointLight(const LightRecord& light) noexcept;
+    static bool allNativeObserved(const Object* native, std::size_t count,
+                                  const Object* observed, std::size_t observedCount) noexcept;
+    static bool contains(const Object* lights, std::size_t count, Object light) noexcept;
+    static bool containsNativeRecord(const LightRecord* records, std::size_t count, Object light) noexcept;
+    static std::size_t selectNotNative(const LightRecord* all, std::size_t count,
+                                       const Object* native, std::size_t nativeCount,
+                                       LightRecord* result, std::size_t capacity) noexcept;
 
 private:
     std::size_t maxLights_;
