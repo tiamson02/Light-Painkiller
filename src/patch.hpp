@@ -40,8 +40,10 @@ struct Stats {
     std::atomic<unsigned long long> overflowEligible{0};
     std::atomic<unsigned long long> replayedMeshes{0}, replayedNative{0}, replayedOverflow{0};
     std::atomic<unsigned long long> lightCacheHits{0}, lightCacheMisses{0};
+    std::atomic<unsigned long long> nativeSlotFastReads{0}, nativeSlotProbedReads{0}, nativeSlotFaults{0};
     std::atomic<unsigned long long> replayUberLights{0}, replayUberBatches{0};
     std::atomic<unsigned long long> skippedUnsupported{0}, skippedNoDevice{0};
+    std::atomic<unsigned long long> additiveAttempts{0}, additiveSuccesses{0};
     // Sampled CPU timings (1/128 WorldMesh::Draw calls with LogLights=1).
     // Do not interpret these as GPU time or whole-frame latency.
     std::atomic<unsigned long long> profStockSamples{0}, profStockNativeNs{0};

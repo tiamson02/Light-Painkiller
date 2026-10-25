@@ -181,6 +181,35 @@ int main() {
            spareUber.extraPassesUsed==1);
     auto invalidWidth=light::makeReplayPlan(heavyRecords.data(),projectedN,nullptr,0,124,true,0);
     assert(!invalidWidth.valid);
+    // v0.2.9 regression: the overflow planner was not applying the existing
+    // safePointLight/safeUberLight rules to extra passes.
+    // The original code incorrectly rendered ALL four below as singles.
+    Record mixed[8]{};
+    for (unsigned i=0;i<4;++i)
+        mixed[i]={ptr(0x1000 + 16*i),0x00400000u,0,1,true};
+    mixed[4]={ptr(0x1040),0x00400000u,0,1,true}; // permitted extra
+    mixed[5]={ptr(0x1050),0x00400000u,1,1,true}; // special: skip
+    mixed[6]={ptr(0x1060),0,0,1,true}; // not dynamic: skip
+    mixed[7]={ptr(0x1070),0x00400000u,0,2,true}; // projector (Uber only)
+    const auto ordinaryOnly=light::makeReplayPlan(mixed,8,nullptr,0,32,false);
+    assert(ordinaryOnly.valid && ordinaryOnly.nativeCount==4 &&
+           ordinaryOnly.extraCount==1 && ordinaryOnly.singleCount==5 &&
+           ordinaryOnly.uberCount==0 && ordinaryOnly.skipped==3);
+    assert(ordinaryOnly.singles[4]==mixed[4].light);
+    const auto withUber=light::makeReplayPlan(mixed,8,nullptr,0,32,true,3);
+    assert(withUber.valid && withUber.extraCount==2 && withUber.singleCount==5 &&
+           withUber.uberCount==1 && withUber.skipped==2);
+    assert(withUber.uber[0]==mixed[7].light);
+    // A native projector with no available Uber path cannot be replaced by
+    // an ordinary RenderLightPass. Fall back to the original native draw.
+    const void* projectorNative[1]={mixed[7].light};
+    assert(!light::makeReplayPlan(mixed,8,projectorNative,1,32,false).valid);
+    // If the registered fifth light is unsupported, leave the mesh native.
+    const auto specialOnly=light::makeReplayPlan(mixed,6,nullptr,0,32,false);
+    assert(specialOnly.valid && specialOnly.extraCount==1 && specialOnly.skipped==1);
+    Record onlySpecial[5]={mixed[0],mixed[1],mixed[2],mixed[3],mixed[5]};
+    assert(!light::makeReplayPlan(onlySpecial,5,nullptr,0,32,false).valid);
+    std::cout << "Light: filtered special/flagless/projector overflow sources\n";
     std::cout << "Light: 128-light full-capacity replay and batching tests passed\n";
     std::cout << "Light: replay/no-four-native-path tests passed\n";
     std::cout << "Light: mixed-light overflow selection tests passed\n";

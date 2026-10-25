@@ -1,10 +1,10 @@
-# Light v0.2.7 — experimental dynamic-light extension for Painkiller
+# Light v0.2.9.11 — An experimental dynamic lighting extension for Painkiller
 
-Open-source light overflow extension for 32-bit DirectX 9 PainEngine (`Engine.dll`) and compatible mods. It attempts to illuminate world geometry with more than four contributing light sources per mesh.
+An open library for the 32-bit PainEngine (DirectX 9), designed for the original *Painkiller* and compatible modifications. Its purpose is to render additional lighting on geometry when a mesh is affected by more than four light sources.
 
-**Rendering:** the implementation follows erychpatch's light-replay sequence: on eligible meshes with more than four registered sources, original light-pass calls are suppressed temporarily during `WorldMesh::Draw` and the selected light list is replayed after the draw. If replay planning cannot safely proceed, the original draw runs untouched. Meshes with at most four lights always use native rendering. The expanded light-capacity configuration has not yet been verified in PainEditor or RoE.
+When the engine's standard limit of four light sources is exceeded, the library generates a lighting list and processes it after `WorldMesh::Draw`. The engine's native lighting passes are suppressed only when such a list is successfully constructed. Meshes affected by four or fewer light sources continue to use the standard rendering method. New lighting configurations created in *PainEditor* or *RoE* (Battle out of Hell) should be verified in-game.
 
-## Light.ini
+## Configuration (`Light.ini`)
 
 ```ini
 [Settings]
@@ -15,36 +15,29 @@ TimerSizeFix=1
 LogLights=0
 ```
 
-- `UnlockLights` — enable light extension (`0` disables light interceptions).
-- `MaxLights` — the maximum size of the source registry for Entity (4–512), **not** the number of actually rendered lamps.
-- `ExtraPassesPerMesh` — budget for passes beyond the basic ones (0–512); `0` completely disables all lighting hooks.
-- `TimerSizeFix` — independent timer fix. You can set it to `0` to test the light.
-- `LogLights` — an aggregated diagnostic with an interval of approximately 5 seconds. `replayedMeshes` shows how many meshes were redrawn via the new path, `replayedNative` / `replayedOverflow` — the number of basic and additional sources in the selected plans.
+- `UnlockLights` — Enables the lighting extension (`0` disables lighting interception).
+- `MaxLights` — The maximum size of the light source registry per entity (4–512); this is **not** the actual number of lights rendered.
+- `ExtraPassesPerMesh` — The budget for additional rendering passes beyond the base set (0–512); setting this to `0` completely disables all lighting hooks.
+- `TimerSizeFix` — An independent fix for the timer; can be set to `0` when testing lighting.
+- `LogLights` — Provides aggregated diagnostic data at intervals of approximately 5 seconds. `replayedMeshes` indicates how many meshes were re-rendered via the new path, while `replayedNative` and `replayedOverflow` show the number of base and additional light sources, respectively, in the processed passes.
 
-`Light.log` is **overwritten once when the process starts** and is stored next to the loaded DLL.
+The `Light.log` file is **overwritten once upon process startup** and is saved in the same directory as the loaded DLL. ## Build
 
-## Build & install
+Windows 10, Visual Studio 2022 C++ (Win32/x86), CMake. Run `build-win32.bat`. It generates:
 
-On Windows with Visual Studio 2022 Win32 C++ tools and CMake, run `build-win32.bat`. Install **either** `dist/vanilla/dinput8.dll` for original Painkiller **or** `dist/custom-exe/Light.dll` for Custom EXE, with `Light.ini` next to the DLL. For a PainEditor install in `Bin\\Editor`, put `Light.ini` there as well.
+- `dist/vanilla/dinput8.dll` — for the standard version of Painkiller (place `Light.ini` alongside it).
+- `dist/custom-exe/Light.dll` — for the Custom EXE version (place `Light.ini` alongside it).
 
-## Validation
+Do not load both libraries simultaneously. For the editor, if the DLL load path contains `Bin\\Editor\\DINPUT8.dll`, the configuration file should be placed at `Bin\\Editor\\Light.ini`.
 
-Compare identical scenes with the patch disabled and enabled, especially soul glow on world geometry, distant torches, projected flashlights and FPS. `Installed lighting=1` does **not** prove extra light was drawn: inspect counters with `LogLights=1`. Unit tests cover the light registry, light-replay planning and a mock WorldMesh hook path; they are not a substitute for a real Win32/MSVC build and in-game visual testing.
+## Verification
 
-Projected lights, PKMDL lighting, render-state cache integration, compatibility with all Engine.dll variants and performance with very many sources are not fully verified. See `KNOWN_LIMITATIONS.md`.
+Compare the same scene—featuring several green souls/torches—using identical graphics settings. Light should be visible on the ground, not just as glowing particles. Run the game first with `UnlockLights=0`, then with `UnlockLights=1`, `ExtraPassesPerMesh=124`, and `TimerSizeFix=0`. If the lighting does not appear, enable `LogLights=1` and check the `replayedMeshes` / `replayedOverflow` values ​​in `Light.log`. Note that `Installed lighting=1` is **not** proof that rendering is working correctly.
 
+**Limitations:** Additional passes can be computationally expensive. Features such as PKMDL mode, the projection flashlight, interactions with the internal D3Dev state cache, and full compatibility with *Battle out of Hell* (RoE) require testing within the actual engine. Automated tests verify scheduling and call sequences using a simulated renderer, but they do not validate the final visual output in PainEditor.
 
-**Budget semantics (v0.2.7):** `MaxLights` is the registry limit; `ExtraPassesPerMesh` limits extra **draw calls** per mesh. For 128 ordinary lights, up to 124 extra calls may be required. The default prioritizes displaying all registered lights over FPS. Lower the budget (for example, 16–32) only when accepting omitted light sources. No spatial culling is implemented yet.
+**Rendering Budget:** `MaxLights` defines the registry capacity, while `ExtraPassesPerMesh` determines the number of *additional render calls* per mesh. For 128 standard lights, up to 124 passes may be required. By default, priority is given to the visibility of registered lights rather than to FPS. If the budget is reduced to 16–32, some light on overloaded meshes will inevitably be lost. Spatial light culling has not yet been restored.
 
-## Custom EXE integration (v0.2.9)
+## Integration with Custom EXE
 
-`Light.dll` in `Data/addons` **building a personal `Painkiller.exe` for RoE**.
-The EXE explicitly calls the DLL export `Light_Initialize()` synchronously
-after loading it, before Lua and world startup. Unlike `dinput8.dll`, this
-build does not install hooks from a background thread started in `DllMain`.
-After installing `dist/custom-exe/Light.dll` alongside `Light.ini`, rebuild
-and replace `Painkiller.exe` from the supplied EXE project. Watch for
-`[Addons][Light] initialization=OK lightingActive=1` in the EXE log.
-This confirms hooks are installed, **not** that lighting is visibly correct.
-Do not run both this addon and a local `dinput8.dll` Light proxy at once.
-
+`Data/addons/Light.dll` requires the **patched `Painkiller.exe` build** included in the package. The EXE synchronously calls the `Light_Initialize()` export upon loading the module, prior to the initialization of Lua or the game world. Unlike `dinput8.dll`, this build does not trigger a hook-installation thread from `DllMain`. After placing `dist/custom-exe/Light.dll` and `Light.ini` in the appropriate locations, build and replace the EXE. The EXE log should display `[Addons][Light] initialization=OK lightingActive=1`. This confirms that the hooks are in place, though it does not guarantee that the in-game lighting is functioning correctly. Do not use `Light.dll` simultaneously with a second instance of the patch loaded via `dinput8.dll`.

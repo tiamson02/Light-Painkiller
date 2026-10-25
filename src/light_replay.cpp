@@ -53,12 +53,21 @@ ReplayPlan makeReplayPlan(const LightRegistry::LightRecord* records,
         return true;
     };
 
-    // Exact native sources first. Even in mixed modes, replay never excludes
-    // a native light just because extra-light budget is exhausted.
+    // Native sources must be faithfully replayable before we suppress stock
+    // passes. When a native source needs an unsupported renderer path, keep
+    // the entire mesh on the original WorldMesh::Draw implementation.
     for (std::size_t i=0;i<baseCount;++i) {
         bool copied=false;
-        for (std::size_t j=0;j<count;++j) if (records[j].light==base[i] && records[j].valid) {
-            copied=append(records[j]); break;
+        for (std::size_t j=0;j<count;++j) {
+            const auto& r=records[j];
+            if (r.light != base[i]) continue;
+            if (LightRegistry::safeUberLight(r)) {
+                if (!uberSupported) return ReplayPlan{};
+            } else if (!LightRegistry::safePointLight(r)) {
+                return ReplayPlan{};
+            }
+            copied=append(r);
+            break;
         }
         if (!copied) return ReplayPlan{};
     }
@@ -74,8 +83,17 @@ ReplayPlan makeReplayPlan(const LightRegistry::LightRecord* records,
         bool inBase=false;
         for (std::size_t j=0;j<baseCount;++j) if (base[j]==r.light) {inBase=true;break;}
         if (inBase) continue;
-        if (!r.valid || !r.light) {++result.skipped;continue;}
-        const bool uber=uberSupported && r.type==2;
+        // Original erychpatch's light dispatcher filters flags, special
+        // lights and type before issuing an additional draw. The old replay
+        // plan accepted any readable Light, including projectors routed to
+        // RenderLightPass when the Uber path was unavailable.
+        const bool projected=LightRegistry::safeUberLight(r);
+        const bool ordinary=LightRegistry::safePointLight(r);
+        if ((!ordinary && !projected) || (projected && !uberSupported)) {
+            ++result.skipped;
+            continue;
+        }
+        const bool uber=projected;
         const std::size_t futureSingles=result.singleCount + (!uber ? 1u : 0u);
         const std::size_t futureUber=result.uberCount + (uber ? 1u : 0u);
         const auto futurePasses=futureSingles+batchCount(futureUber,uberBatchWidth);

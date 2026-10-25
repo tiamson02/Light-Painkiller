@@ -15,6 +15,11 @@ EnginePatch g;
 Stats stats;
 thread_local const void* tlsSuppressedMesh = nullptr;
 static std::mutex initMutex;
+// Optional, isolated fast path for repeated stock-light-slot reads on
+// overflow meshes. Opt out with PAINLIGHT_FAST_NATIVE_SLOTS=0 before process
+// start to compare on the same binary without touching Light.ini.
+static bool s_fastNativeSlots = true;
+
 
 // CPU-only sampling. Sampling is disabled completely unless LogLights=1;
 // no high-resolution clock calls occur in the normal release hot path.
@@ -95,18 +100,40 @@ void __fastcall hookReset(void* entity, void*) {
 }
 
 static unsigned readNativeSlots(void* mesh, const void** out) {
-    if (!mesh || g.variant == EngineVariant::Unknown) return 0;
+    if (!mesh || !out || g.variant == EngineVariant::Unknown) return 0;
     // erychpatch sub_10004FD0: native count is 0..4, not necessarily 4.
     const size_t slotsOffset = g.variant == EngineVariant::Proto2003 ? 1316 : 1320;
     const size_t countOffset = g.variant == EngineVariant::Proto2003 ? 1540 : 1544;
     const unsigned char* p = static_cast<const unsigned char*>(mesh);
-    // Both fields share one committed WorldMesh allocation: one region probe.
+
+    if (s_fastNativeSlots) {
+        // The original v0.2.10 probes the WorldMesh allocation via
+        // VirtualQuery on *every* overflow Draw. Five overlapping lights can
+        // produce thousands of these WinAPI calls per frame. This fast path
+        // reads the two fields directly, with SEH for a stale/inaccessible
+        // mesh pointer. It has no cross-frame cache and never dereferences
+        // beyond the native four pointer slots.
+        bump(stats.nativeSlotFastReads);
+        __try {
+            uint32_t nativeCount = 0;
+            memcpy(&nativeCount, p + countOffset, sizeof nativeCount);
+            if (nativeCount > 4) return 0;
+            memcpy(out, p + slotsOffset, sizeof(void*) * nativeCount);
+            return nativeCount;
+        } __except(EXCEPTION_EXECUTE_HANDLER) {
+            bump(stats.nativeSlotFaults);
+            return 0; // fail closed; caller retains stock Draw if no plan
+        }
+    }
+
+    // Identical fallback to v0.2.10 for A/B performance comparison.
+    bump(stats.nativeSlotProbedReads);
     if (!readable(p + slotsOffset, countOffset + sizeof(uint32_t) - slotsOffset)) return 0;
-    uint32_t count = 0;
-    memcpy(&count, p + countOffset, sizeof count);
-    if (count > 4) return 0;
-    memcpy(out, p + slotsOffset, sizeof(void*) * count);
-    return count;
+    uint32_t nativeCount = 0;
+    memcpy(&nativeCount, p + countOffset, sizeof nativeCount);
+    if (nativeCount > 4) return 0;
+    memcpy(out, p + slotsOffset, sizeof(void*) * nativeCount);
+    return nativeCount;
 }
 
 static bool supportsUberMode(void* renderDevice) {
@@ -196,6 +223,7 @@ struct AdditiveState {
     static constexpr unsigned long keys[4] = {27u, 19u, 20u, 14u};
     static constexpr unsigned long values[4] = {1u, 2u, 2u, 0u};
     explicit AdditiveState(D3DStateDevice d) : dev(d) {
+        bump(stats.additiveAttempts);
         if (!dev.ptr || !dev.get || !dev.set) return;
         for (unsigned i=0;i<4;++i)
             if (dev.get(dev.ptr, keys[i], &old[i]) < 0) return;
@@ -208,6 +236,7 @@ struct AdditiveState {
             return;
         }
         ready=true;
+        bump(stats.additiveSuccesses);
     }
     ~AdditiveState() {
         if (ready) for(unsigned i=0;i<4;++i) dev.set(dev.ptr, keys[i], old[i]);
@@ -347,6 +376,8 @@ void maybeLogDiagnostics() {
         read(stats.incomplete), read(stats.noOverflow), read(stats.overflowEligible),
         read(stats.lightCacheHits), read(stats.lightCacheMisses),
         read(stats.timerCalls), g.lights ? g.lights->trackedEntities() : 0);
+    log("DIAG nativeSlotReads fast=%llu probed=%llu faults=%llu (each probe is a VirtualQuery syscall in v0.2.10)",
+        read(stats.nativeSlotFastReads), read(stats.nativeSlotProbedReads), read(stats.nativeSlotFaults));
     log("DIAG replayedMeshes=%llu replayedNative=%llu replayedOverflow=%llu; original light passes suppressed only for reconstructed overflow meshes",
         read(stats.replayedMeshes),read(stats.replayedNative),read(stats.replayedOverflow));
     const auto stockSamples = read(stats.profStockSamples);
@@ -360,6 +391,8 @@ void maybeLogDiagnostics() {
         replaySamples ? read(stats.profReplayPrepareNs)/replaySamples/1000 : 0,
         replaySamples ? read(stats.profReplayNativeNs)/replaySamples/1000 : 0,
         replaySamples ? read(stats.profReplayPassNs)/replaySamples/1000 : 0);
+    log("DIAG D3D9 additiveStateAttempts=%llu additiveStateOK=%llu (each successful batch saves/sets/restores 4 states = ~12 COM calls)",
+        read(stats.additiveAttempts),read(stats.additiveSuccesses));
     log("DIAG LIGHT overlap>8=%llu overlap>16=%llu overlap>32=%llu maxSourcesOnMesh=%llu (cumulative draw observations)",
         read(stats.profOver8),read(stats.profOver16),read(stats.profOver32),
         read(stats.profMaxLightsOnMesh));
@@ -419,9 +452,17 @@ bool initialize(HMODULE self) {
     initLog(self);
     char modulePath[MAX_PATH] = {};
     GetModuleFileNameA(self, modulePath, MAX_PATH);
-    log("Light v0.2.9 initializing (EXE-synchronized addon handshake; v0.2.7 renderer); PID=%lu; module=%s",
+    log("Light v0.2.11 experimental fast-native-slot read initializing (EXE-synchronized addon handshake; v0.2.7 renderer); PID=%lu; module=%s",
         (unsigned long)GetCurrentProcessId(), modulePath);
     g.config = loadConfig(self);
+    char fastSetting[16] = {};
+    const DWORD fastLen = GetEnvironmentVariableA("PAINLIGHT_FAST_NATIVE_SLOTS",
+                                                  fastSetting, sizeof fastSetting);
+    s_fastNativeSlots = !(fastLen > 0 && fastLen < sizeof fastSetting &&
+                          (strcmp(fastSetting, "0") == 0 || _stricmp(fastSetting, "false") == 0));
+    log("Native slot reads: %s (PAINLIGHT_FAST_NATIVE_SLOTS=0 restores v0.2.10 path)",
+        s_fastNativeSlots ? "SEH direct read, no per-overflow VirtualQuery" : "VirtualQuery probe");
+
     log("Engine.dll base=%p", static_cast<void*>(engine));
     void* add = exported(engine, kAdd);
     void* reset = exported(engine, kReset);

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(Light VERSION 0.2.9 LANGUAGES C CXX)
+project(Light VERSION 0.2.11 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
